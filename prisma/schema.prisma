@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleType { FOUNDER PROFESSOR COLLEGE INVESTOR MENTOR MEDIA_PARTNER MEDIA_OPERATOR SALES MANAGER SUPER_ADMIN }
+enum FounderRole { PRIMARY CO_FOUNDER TEAM_MEMBER }
+enum FounderStatus { ACTIVE FORMER EXITED REMOVED DISPUTED }
+enum StartupStatus { ACTIVE CLOSED ACQUIRED MERGED DORMANT }
+enum Stage { IDEA PROBLEM_VALIDATED MVP EARLY_TRACTION REVENUE GROWTH FUNDRAISING SCALE }
+enum PayStatus { CREATED PAID REFUNDED FAILED }
+
+// One account for life. Roles are history, never recreated.
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  roles     UserRole[]
+  founder   Founder?
+  createdAt DateTime   @default(now())
+}
+model UserRole {
+  id        String    @id @default(cuid())
+  userId    String
+  role      RoleType
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  user      User      @relation(fields: [userId], references: [id])
+  @@index([userId])
+}
+
+// Founder is a person, not tied to one company.
+model Founder {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  founderCode String   @unique
+  kycStatus   String   @default("PENDING") // status + reference only, never raw Aadhaar
+  kycRef      String?
+  cardActive  Boolean  @default(false)
+  user        User     @relation(fields: [userId], references: [id])
+  startups    StartupFounder[]
+  scores      FounderScoreHistory[]
+}
+
+model Startup {
+  id       String        @id @default(cuid())
+  name     String
+  stage    Stage         @default(IDEA)
+  status   StartupStatus @default(ACTIVE)
+  paidAt   DateTime?
+  founders StartupFounder[]
+  payments Payment[]
+}
+
+// Many-to-many: Founder <-> StartupFounder <-> Startup
+model StartupFounder {
+  id        String        @id @default(cuid())
+  founderId String
+  startupId String
+  role      FounderRole
+  status    FounderStatus @default(ACTIVE)
+  startDate DateTime      @default(now())
+  endDate   DateTime?
+  equityPct Decimal?      @db.Decimal(5, 2)
+  founder   Founder       @relation(fields: [founderId], references: [id])
+  startup   Startup       @relation(fields: [startupId], references: [id])
+  @@unique([founderId, startupId, startDate])
+}
+
+// Never overwrite scores. Insert a new row each time.
+model FounderScoreHistory {
+  id        String   @id @default(cuid())
+  founderId String
+  total     Int
+  parts     Json
+  reason    String
+  createdAt DateTime @default(now())
+  founder   Founder  @relation(fields: [founderId], references: [id])
+  @@index([founderId, createdAt])
+}
+
+// One payment per startup, not per founder.
+model Payment {
+  id        String    @id @default(cuid())
+  startupId String
+  gatewayId String    @unique
+  amountInr Int
+  status    PayStatus @default(CREATED)
+  createdAt DateTime  @default(now())
+  startup   Startup   @relation(fields: [startupId], references: [id])
+}
+
+// Append-only. No update or delete in application code.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  object    String
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+  @@index([object, createdAt])
+}
